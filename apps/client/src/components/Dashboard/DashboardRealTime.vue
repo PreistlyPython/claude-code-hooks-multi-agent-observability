@@ -195,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useWebSocket } from '../../composables/useWebSocket';
 import type { HookEvent } from '../../types';
 
@@ -207,6 +207,8 @@ const selectedEvent = ref<HookEvent | null>(null);
 const sessionData = ref<Map<string, any>>(new Map());
 const eventCounter = ref(0);
 const lastMinuteEvents = ref<number[]>([]);
+const currentTime = ref(Date.now());
+const timelineUpdateInterval = ref<number | null>(null);
 
 // Session columns computed from actual hook data
 const sessionColumns = computed(() => {
@@ -258,7 +260,7 @@ const eventsPerMinute = computed(() => {
 // Timeline computed properties
 const timeLabels = computed(() => {
   const labels = [];
-  const now = Date.now();
+  const now = currentTime.value;
   const intervals = 5; // 5 time labels
   
   for (let i = 0; i <= intervals; i++) {
@@ -274,7 +276,7 @@ const timeLabels = computed(() => {
 });
 
 const getTimelineEvents = (session: any) => {
-  const now = Date.now();
+  const now = currentTime.value;
   const fiveMinutesAgo = now - (5 * 60000);
   return session.events.filter((event: any) => 
     event.timestamp && event.timestamp > fiveMinutesAgo
@@ -282,13 +284,13 @@ const getTimelineEvents = (session: any) => {
 };
 
 const getTimelinePosition = (event: any) => {
-  const now = Date.now();
+  const now = currentTime.value;
   const fiveMinutesAgo = now - (5 * 60000);
   const position = ((event.timestamp - fiveMinutesAgo) / (5 * 60000)) * 100;
   
   return {
     left: `${Math.max(0, Math.min(100, position))}%`,
-    animationDelay: `${Math.random() * 0.5}s`
+    transition: 'left 1s linear' // Smooth transition for position updates
   };
 };
 
@@ -437,7 +439,7 @@ const generateMockData = () => {
   return mockEvents.sort((a, b) => b.timestamp - a.timestamp);
 };
 
-// Track events per minute
+// Track events per minute and update timeline
 onMounted(() => {
   // Add mock data if no real events are available
   if (events.value.length === 0) {
@@ -445,6 +447,44 @@ onMounted(() => {
     events.value.push(...mockEvents);
   }
   
+  // Update current time for smooth timeline scrolling
+  timelineUpdateInterval.value = setInterval(() => {
+    currentTime.value = Date.now();
+    
+    // Add new mock event occasionally for testing (remove this in production)
+    if (Math.random() < 0.1) { // 10% chance each second
+      const sessionIds = ['session-cc-1', 'session-cc-2', 'session-cc-3', 'session-cd-1'];
+      const eventTypes = ['pre_tool_use', 'post_tool_use', 'chat', 'notification', 'stop'];
+      const toolNames = ['Edit', 'Read', 'Bash', 'Write', 'Search'];
+      
+      const sessionId = sessionIds[Math.floor(Math.random() * sessionIds.length)];
+      const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+      
+      const newEvent = {
+        id: `mock-${Date.now()}-${Math.random()}`,
+        session_id: sessionId,
+        source_app: sessionId.includes('cc') ? 'claude-code' : 'claude-desktop',
+        hook_event_type: eventType,
+        timestamp: Date.now(),
+        payload: {
+          tool_name: eventType === 'pre_tool_use' ? toolNames[Math.floor(Math.random() * toolNames.length)] : undefined,
+          message: `Real-time ${eventType} event`,
+          status: eventType === 'post_tool_use' ? 'success' : undefined
+        },
+        summary: `Real-time ${eventType.replace(/_/g, ' ')} event`,
+        isNew: true
+      };
+      
+      events.value.unshift(newEvent);
+      
+      // Remove the 'new' flag after animation
+      setTimeout(() => {
+        newEvent.isNew = false;
+      }, 2000);
+    }
+  }, 1000); // Update every second for smooth scrolling
+  
+  // Track events per minute
   setInterval(() => {
     const now = Date.now();
     const oneMinuteAgo = now - 60000;
@@ -458,6 +498,13 @@ onMounted(() => {
       lastMinuteEvents.value.shift();
     }
   }, 60000); // Update every minute
+});
+
+// Cleanup interval on unmount
+onUnmounted(() => {
+  if (timelineUpdateInterval.value) {
+    clearInterval(timelineUpdateInterval.value);
+  }
 });
 </script>
 
@@ -627,7 +674,7 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease; /* Don't transition left here */
   animation: eventPulse 2s infinite;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
