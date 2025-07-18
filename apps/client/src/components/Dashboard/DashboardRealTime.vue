@@ -30,42 +30,61 @@
     <section class="logo-stream-section">
       <div class="timeline-container">
         <div class="timeline-header">
-          <h2>🚀 Agent Activity Timeline</h2>
+          <div class="timeline-title-section">
+            <button 
+              @click="isTimelineCollapsed = !isTimelineCollapsed"
+              class="collapse-button"
+              :title="isTimelineCollapsed ? 'Expand timeline' : 'Collapse timeline'"
+            >
+              <span class="collapse-icon">{{ isTimelineCollapsed ? '▶' : '▼' }}</span>
+            </button>
+            <h2>🚀 Agent Activity Timeline</h2>
+          </div>
           <div class="timeline-controls">
             <span class="timeline-range">Last 5 minutes</span>
-          </div>
-        </div>
-        
-        <!-- Time Labels -->
-        <div class="timeline-labels">
-          <div v-for="label in timeLabels" :key="label.position" class="time-label" :style="{ left: label.position + '%' }">
-            <div class="time-pst">{{ label.pst }}</div>
-            <div class="time-relative">{{ label.relative }}</div>
-          </div>
-        </div>
-        
-        <!-- Session Rows -->
-        <div class="session-rows">
-          <div v-for="session in sessionColumns" :key="session.sessionId" class="session-row">
-            <div class="session-label">
-              <span class="session-icon-small">{{ getSessionIcon(session) }}</span>
-              <div class="session-name-container">
-                <span class="session-name-full">{{ session.sessionName }}</span>
-                <span class="session-id-small">{{ session.sessionId.substring(0, 8) }}</span>
-              </div>
-            </div>
-            <div class="timeline-track">
-              <div v-for="event in getTimelineEvents(session)" 
-                   :key="event.id || event.timestamp"
-                   class="timeline-event"
-                   :class="`event-${event.hook_event_type}`"
-                   :style="getTimelinePosition(event)"
-                   :title="`${event.hook_event_type} at ${formatPSTTime(event.timestamp)}`">
-                <span class="event-icon-small">{{ getEventIcon(event.hook_event_type) }}</span>
-              </div>
+            <div class="debug-info">
+              <span class="debug-badge">Icons: {{ iconCallCount }}</span>
+              <span class="debug-badge error" v-if="clipboardIconCalls > 0">📋: {{ clipboardIconCalls }}</span>
             </div>
           </div>
         </div>
+        
+        <!-- Collapsible Timeline Content -->
+        <Transition name="timeline-collapse">
+          <div v-show="!isTimelineCollapsed" class="timeline-content">
+            <!-- Time Labels -->
+            <div class="timeline-labels">
+              <div v-for="label in timeLabels" :key="label.position" class="time-label" :style="{ left: label.position + '%' }">
+                <div class="time-pst">{{ label.pst }}</div>
+                <div class="time-relative">{{ label.relative }}</div>
+              </div>
+            </div>
+            
+            <!-- Session Rows -->
+            <div class="session-rows">
+              <div v-for="session in sessionColumns" :key="session.sessionId" class="session-row">
+                <div class="session-label">
+                  <span class="session-icon-small">{{ getSessionIcon(session) }}</span>
+                  <div class="session-name-container">
+                    <span class="session-name-full">{{ session.sessionName }}</span>
+                    <span class="session-id-small">{{ session.sessionId.substring(0, 8) }}</span>
+                  </div>
+                </div>
+                <div class="timeline-track">
+                  <div v-for="(event, idx) in getTimelineEvents(session)" 
+                       :key="event.id || event.timestamp"
+                       class="timeline-event"
+                       :class="`event-${event.hook_event_type || 'unknown'}`"
+                       :style="getTimelinePosition({...event, index: idx})"
+                       :title="`${event.hook_event_type || 'unknown'} at ${formatPSTTime(event.timestamp)}`"
+                       @click="debugEventClick(event, idx)">
+                    <span class="event-icon-small">{{ getEventIcon(event.hook_event_type || 'pre_tool_use') }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </div>
     </section>
 
@@ -117,10 +136,10 @@
               >
                 <div class="event-header">
                   <div class="event-icon">
-                    {{ getEventIcon(event.hook_event_type) }}
+                    {{ getEventIcon(event.hook_event_type || 'pre_tool_use') }}
                   </div>
                   <div class="event-type">
-                    {{ event.hook_event_type }}
+                    {{ event.hook_event_type || 'pre_tool_use' }}
                   </div>
                   <div class="event-time">
                     <div class="time-pst">{{ formatPSTTime(event.timestamp) }}</div>
@@ -209,6 +228,11 @@ const eventCounter = ref(0);
 const lastMinuteEvents = ref<number[]>([]);
 const currentTime = ref(Date.now());
 const timelineUpdateInterval = ref<number | null>(null);
+const isTimelineCollapsed = ref(false);
+
+// Global icon call tracking
+const iconCallCount = ref(0);
+const clipboardIconCalls = ref(0);
 
 // Session columns computed from actual hook data
 const sessionColumns = computed(() => {
@@ -216,6 +240,11 @@ const sessionColumns = computed(() => {
   
   // Group events by session_id
   events.value.forEach(event => {
+    // Ensure event has a valid timestamp
+    if (!event.timestamp) {
+      event.timestamp = Date.now();
+    }
+    
     if (!sessions.has(event.session_id)) {
       sessions.set(event.session_id, {
         sessionId: event.session_id,
@@ -278,14 +307,74 @@ const timeLabels = computed(() => {
 const getTimelineEvents = (session: any) => {
   const now = currentTime.value;
   const fiveMinutesAgo = now - (5 * 60000);
-  return session.events.filter((event: any) => 
+  
+  console.group(`🔍 getTimelineEvents Debug for session: ${session.sessionId}`);
+  console.log('Session events count:', session.events.length);
+  console.log('Current time:', now);
+  console.log('Five minutes ago:', fiveMinutesAgo);
+  
+  // Always return at least the last 10 events even if they're older than 5 minutes
+  const recentEvents = session.events.filter((event: any) => 
     event.timestamp && event.timestamp > fiveMinutesAgo
   );
+  
+  console.log('Recent events count:', recentEvents.length);
+  
+  // If no recent events, show the last 10 events regardless of age
+  let eventsToShow = recentEvents.length > 0 ? recentEvents : session.events.slice(0, 10);
+  
+  console.log('Events to show count:', eventsToShow.length);
+  console.log('Events to show (first 3):', eventsToShow.slice(0, 3).map(e => ({
+    id: e.id,
+    hook_event_type: e.hook_event_type,
+    timestamp: e.timestamp
+  })));
+  
+  // Ensure each event has a valid hook_event_type
+  const processedEvents = eventsToShow.map((event: any, index: number) => {
+    const originalType = event.hook_event_type;
+    
+    // Don't mutate the original event - create a new one
+    const processedEvent = Object.freeze({
+      ...event,
+      hook_event_type: event.hook_event_type || 'pre_tool_use', // Fallback to prevent undefined
+      timestamp: event.timestamp || Date.now()
+    });
+    
+    if (originalType !== processedEvent.hook_event_type) {
+      console.warn(`⚠️ Event ${index} had invalid hook_event_type:`, originalType, '-> fixed to:', processedEvent.hook_event_type);
+    }
+    
+    return processedEvent;
+  });
+  
+  console.log('Processed events (first 3):', processedEvents.slice(0, 3).map(e => ({
+    id: e.id,
+    hook_event_type: e.hook_event_type,
+    timestamp: e.timestamp
+  })));
+  
+  console.groupEnd();
+  return processedEvents;
 };
 
 const getTimelinePosition = (event: any) => {
   const now = currentTime.value;
   const fiveMinutesAgo = now - (5 * 60000);
+  const eventAge = now - event.timestamp;
+  
+  // If event is older than 5 minutes, distribute them evenly on the left side
+  if (eventAge > 5 * 60000) {
+    // Place older events between 0% and 10% of the timeline
+    const index = event.index || 0; // We'll need to add index in the template
+    const position = (index / 10) * 10; // Distribute across first 10% of timeline
+    return {
+      left: `${position}%`,
+      opacity: '0.6' // Slightly faded to show they're older
+    };
+  }
+  
+  // For recent events, calculate normal position
   const position = ((event.timestamp - fiveMinutesAgo) / (5 * 60000)) * 100;
   
   return {
@@ -316,6 +405,9 @@ const getSessionIconClass = (session: any) => {
 };
 
 const getEventIcon = (eventType: string) => {
+  // Track all icon calls
+  iconCallCount.value++;
+  
   const icons = {
     'pre_tool_use': '🔧',
     'post_tool_use': '✅',
@@ -327,7 +419,37 @@ const getEventIcon = (eventType: string) => {
     'warning': '⚠️',
     'info': 'ℹ️'
   };
-  return icons[eventType] || '📋';
+  
+  // Reduced logging - only log when there's an issue
+  if (!eventType || eventType.trim() === '') {
+    console.warn('⚠️ getEventIcon: eventType is null/undefined/empty, using default 🔧');
+    return '🔧'; // Default to tool icon instead of clipboard
+  }
+  
+  const cleanEventType = eventType.trim();
+  const icon = icons[cleanEventType];
+  
+  if (!icon) {
+    console.warn(`⚠️ getEventIcon: Unknown event type "${cleanEventType}" (original: "${eventType}"), using default 🔧`);
+    return '🔧'; // Default to tool icon instead of clipboard
+  }
+  
+  // Track if we're somehow returning clipboard icon
+  if (icon === '📋') {
+    clipboardIconCalls.value++;
+    console.error('🚨 CLIPBOARD ICON DETECTED! This should not happen!');
+    console.error('Event type:', eventType);
+    console.error('Clean event type:', cleanEventType);
+    console.error('Icon:', icon);
+    console.trace('Stack trace for clipboard icon');
+  }
+  
+  // Only log detailed info if it's the first 10 calls or if there's an issue
+  if (iconCallCount.value <= 10 || icon === '📋') {
+    console.log(`🔍 getEventIcon #${iconCallCount.value}: "${cleanEventType}" -> "${icon}"`);
+  }
+  
+  return icon;
 };
 
 const getEventSummary = (event: HookEvent) => {
@@ -382,13 +504,64 @@ const selectEvent = (event: HookEvent) => {
   selectedEvent.value = event;
 };
 
+const debugEventClick = (event: any, index: number) => {
+  console.group(`🔍 Event Click Debug - Index: ${index}`);
+  console.log('Full event object:', event);
+  console.log('Event ID:', event.id);
+  console.log('Event hook_event_type:', event.hook_event_type);
+  console.log('Event timestamp:', event.timestamp);
+  console.log('Event payload:', event.payload);
+  console.log('Event is frozen:', Object.isFrozen(event));
+  console.log('Event properties:', Object.keys(event));
+  
+  // Test icon generation
+  const icon = getEventIcon(event.hook_event_type);
+  console.log('Generated icon:', icon);
+  console.log('Icon is clipboard (📋):', icon === '📋');
+  
+  console.groupEnd();
+};
+
 // Watch for new events and add animation
 watch(events, (newEvents, oldEvents) => {
+  console.group('🔍 Events Watch Debug');
+  console.log('Old events count:', oldEvents.length);
+  console.log('New events count:', newEvents.length);
+  
+  // Check for event data integrity
+  if (newEvents.length > 0) {
+    console.log('Sample event (first):');
+    const sample = newEvents[0];
+    console.log('- hook_event_type:', sample.hook_event_type);
+    console.log('- is frozen:', Object.isFrozen(sample));
+    console.log('- keys:', Object.keys(sample));
+    
+    // Check if events have been mutated
+    const eventsWithMissingTypes = newEvents.filter(e => !e.hook_event_type);
+    if (eventsWithMissingTypes.length > 0) {
+      console.error('🚨 Found events with missing hook_event_type:', eventsWithMissingTypes.length);
+      console.error('Examples:', eventsWithMissingTypes.slice(0, 3));
+    }
+  }
+  
   if (newEvents.length > oldEvents.length) {
     // Mark new events
     const newEventCount = newEvents.length - oldEvents.length;
+    console.log('New event count:', newEventCount);
+    
     for (let i = 0; i < newEventCount; i++) {
       const event = newEvents[i];
+      console.log(`New event ${i}:`, {
+        id: event.id,
+        hook_event_type: event.hook_event_type,
+        timestamp: event.timestamp,
+        isFrozen: Object.isFrozen(event)
+      });
+      
+      // Test icon generation immediately
+      const icon = getEventIcon(event.hook_event_type);
+      console.log(`Icon for new event ${i}:`, icon);
+      
       event.isNew = true;
       
       // Remove the 'new' flag after animation
@@ -397,6 +570,31 @@ watch(events, (newEvents, oldEvents) => {
       }, 2000);
     }
   }
+  
+  console.groupEnd();
+}, { deep: true });
+
+// Save collapse state to localStorage
+watch(isTimelineCollapsed, (newValue) => {
+  localStorage.setItem('timeline-collapsed', String(newValue));
+});
+
+// Debug watcher for sessionColumns
+watch(sessionColumns, (newCols, oldCols) => {
+  console.group('🔍 Session Columns Watch Debug');
+  console.log('Old columns count:', oldCols.length);
+  console.log('New columns count:', newCols.length);
+  
+  newCols.forEach((col, idx) => {
+    console.log(`Session ${idx}:`, {
+      id: col.sessionId,
+      eventCount: col.events.length,
+      firstEventType: col.events[0]?.hook_event_type,
+      hasUndefinedTypes: col.events.some(e => !e.hook_event_type)
+    });
+  });
+  
+  console.groupEnd();
 }, { deep: true });
 
 // Generate mock data for testing when no server is available
@@ -415,23 +613,26 @@ const generateMockData = () => {
     
     for (let i = 0; i < eventCount; i++) {
       const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
-      const timeOffset = Math.floor(Math.random() * 300000); // Random time within last 5 minutes
+      // Mix of recent and slightly older events
+      const timeOffset = i < 5 
+        ? Math.floor(Math.random() * 60000) // First 5 events within last minute
+        : Math.floor(Math.random() * 240000); // Rest within last 4 minutes
       
-      mockEvents.push({
+      mockEvents.push(Object.freeze({
         id: `${sessionId}-${i}`,
         session_id: sessionId,
         source_app: sourceApp,
         hook_event_type: eventType,
         timestamp: Date.now() - timeOffset,
-        payload: {
+        payload: Object.freeze({
           tool_name: eventType === 'pre_tool_use' ? toolNames[Math.floor(Math.random() * toolNames.length)] : undefined,
           message: `${eventType} event in ${sessionId}`,
           duration: Math.floor(Math.random() * 5000),
           status: eventType === 'post_tool_use' ? 'success' : undefined
-        },
+        }),
         summary: `${eventType.replace(/_/g, ' ')} - ${sourceApp} session`,
         isNew: false
-      });
+      }));
     }
   }
   
@@ -441,6 +642,12 @@ const generateMockData = () => {
 
 // Track events per minute and update timeline
 onMounted(() => {
+  // Restore collapse state from localStorage
+  const savedCollapseState = localStorage.getItem('timeline-collapsed');
+  if (savedCollapseState !== null) {
+    isTimelineCollapsed.value = savedCollapseState === 'true';
+  }
+  
   // Add mock data if no real events are available
   if (events.value.length === 0) {
     const mockEvents = generateMockData();
@@ -460,20 +667,20 @@ onMounted(() => {
       const sessionId = sessionIds[Math.floor(Math.random() * sessionIds.length)];
       const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
       
-      const newEvent = {
+      const newEvent = Object.freeze({
         id: `mock-${Date.now()}-${Math.random()}`,
         session_id: sessionId,
         source_app: sessionId.includes('cc') ? 'claude-code' : 'claude-desktop',
         hook_event_type: eventType,
         timestamp: Date.now(),
-        payload: {
+        payload: Object.freeze({
           tool_name: eventType === 'pre_tool_use' ? toolNames[Math.floor(Math.random() * toolNames.length)] : undefined,
           message: `Real-time ${eventType} event`,
           status: eventType === 'post_tool_use' ? 'success' : undefined
-        },
+        }),
         summary: `Real-time ${eventType.replace(/_/g, ' ')} event`,
         isNew: true
-      };
+      });
       
       events.value.unshift(newEvent);
       
@@ -547,6 +754,38 @@ onUnmounted(() => {
   margin-bottom: 1rem;
 }
 
+.timeline-title-section {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.collapse-button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+
+.collapse-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+
+.collapse-icon {
+  color: #fbbf24;
+  font-size: 0.875rem;
+  font-weight: bold;
+  transition: transform 0.2s ease;
+}
+
 .timeline-header h2 {
   font-size: 1.25rem;
   font-weight: 600;
@@ -560,12 +799,53 @@ onUnmounted(() => {
   align-items: center;
 }
 
+.debug-info {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.debug-badge {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.debug-badge.error {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+}
+
 .timeline-range {
   font-size: 0.875rem;
   color: rgba(255, 255, 255, 0.8);
   padding: 0.25rem 0.75rem;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 0.5rem;
+}
+
+/* Timeline Collapse Animation */
+.timeline-content {
+  overflow: hidden;
+}
+
+.timeline-collapse-enter-active,
+.timeline-collapse-leave-active {
+  transition: all 0.3s ease;
+}
+
+.timeline-collapse-enter-from,
+.timeline-collapse-leave-to {
+  opacity: 0;
+  max-height: 0;
+}
+
+.timeline-collapse-enter-to,
+.timeline-collapse-leave-from {
+  opacity: 1;
+  max-height: 300px;
 }
 
 /* Time Labels */
@@ -1225,8 +1505,18 @@ onUnmounted(() => {
     text-align: center;
   }
   
+  .timeline-title-section {
+    justify-content: center;
+  }
+  
   .timeline-header h2 {
     font-size: 1rem;
+  }
+  
+  .collapse-button {
+    width: 28px;
+    height: 28px;
+    padding: 0.25rem;
   }
   
   .session-label {
