@@ -1,0 +1,30 @@
+{
+  "name": "claude-code-hooks-multi-agent-observability",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-agent observability system with enhanced dashboard and hooks",
+  "workspaces": [
+    "apps/client",
+    "apps/server"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "cd apps/client && npm run dev",
+    "dev:server": "cd apps/server && bun run dev",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "cd apps/client && npm run build",
+    "build:server": "cd apps/server && bun run build",
+    "start": "npm run start:server",
+    "start:server": "cd apps/server && bun run start",
+    "install:all": "npm install && cd apps/client && npm install && cd ../server && bun install",
+    "clean": "rm -rf node_modules apps/*/node_modules",
+    "reset": "npm run clean && npm run install:all"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "bun": ">=1.0.0"
+  }
+}
