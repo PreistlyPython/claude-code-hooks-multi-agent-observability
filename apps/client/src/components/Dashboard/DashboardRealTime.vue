@@ -41,7 +41,7 @@
             <h2>🚀 Agent Activity Timeline</h2>
           </div>
           <div class="timeline-controls">
-            <span class="timeline-range">Last 5 minutes</span>
+            <span class="timeline-range">Last 10 minutes</span>
             <div class="debug-info">
               <span class="debug-badge">Icons: {{ iconCallCount }}</span>
               <span class="debug-badge error" v-if="clipboardIconCalls > 0">📋: {{ clipboardIconCalls }}</span>
@@ -286,49 +286,52 @@ const eventsPerMinute = computed(() => {
   return recentEvents.length;
 });
 
-// Timeline computed properties
+// Timeline computed properties with throttling for performance
 const timeLabels = computed(() => {
   const labels = [];
   const now = currentTime.value;
   const intervals = 5; // 5 time labels
+  const minuteInterval = 2; // Every 2 minutes for 10-minute range
   
   for (let i = 0; i <= intervals; i++) {
-    const time = now - (i * 60000); // Each label is 1 minute apart
+    const time = now - (i * minuteInterval * 60000); // Each label is 2 minutes apart
     labels.push({
       position: (1 - (i / intervals)) * 100,
       pst: formatPSTTime(time),
-      relative: i === 0 ? 'Now' : `${i}m ago`
+      relative: i === 0 ? 'Now' : `${i * minuteInterval}m ago`
     });
   }
   
   return labels;
 });
 
+// Throttled timeline position calculation for performance
+const throttledCurrentTime = computed(() => {
+  // Update position calculations only every ~100ms for ultra-smooth movement
+  const timeStep = 100; // milliseconds
+  return Math.floor(currentTime.value / timeStep) * timeStep;
+});
+
 const getTimelineEvents = (session: any) => {
   const now = currentTime.value;
-  const fiveMinutesAgo = now - (5 * 60000);
+  const timeRange = 10 * 60000; // Expand to 10 minutes for better spread
+  const timeRangeAgo = now - timeRange;
   
-  console.group(`🔍 getTimelineEvents Debug for session: ${session.sessionId}`);
-  console.log('Session events count:', session.events.length);
-  console.log('Current time:', now);
-  console.log('Five minutes ago:', fiveMinutesAgo);
+  // Reduced logging for performance - only log when debugging
+  const debug = false; // Set to true when debugging timeline issues
   
-  // Always return at least the last 10 events even if they're older than 5 minutes
+  if (debug) {
+    console.group(`🔍 getTimelineEvents Debug for session: ${session.sessionId}`);
+    console.log('Session events count:', session.events.length);
+  }
+  
+  // Show events from the last 10 minutes, or if none, show last 15 events
   const recentEvents = session.events.filter((event: any) => 
-    event.timestamp && event.timestamp > fiveMinutesAgo
+    event.timestamp && event.timestamp > timeRangeAgo
   );
   
-  console.log('Recent events count:', recentEvents.length);
-  
-  // If no recent events, show the last 10 events regardless of age
-  let eventsToShow = recentEvents.length > 0 ? recentEvents : session.events.slice(0, 10);
-  
-  console.log('Events to show count:', eventsToShow.length);
-  console.log('Events to show (first 3):', eventsToShow.slice(0, 3).map(e => ({
-    id: e.id,
-    hook_event_type: e.hook_event_type,
-    timestamp: e.timestamp
-  })));
+  // If no recent events, show the last 15 events regardless of age
+  let eventsToShow = recentEvents.length > 0 ? recentEvents : session.events.slice(0, 15);
   
   // Ensure each event has a valid hook_event_type
   const processedEvents = eventsToShow.map((event: any, index: number) => {
@@ -341,45 +344,45 @@ const getTimelineEvents = (session: any) => {
       timestamp: event.timestamp || Date.now()
     });
     
-    if (originalType !== processedEvent.hook_event_type) {
+    if (originalType !== processedEvent.hook_event_type && debug) {
       console.warn(`⚠️ Event ${index} had invalid hook_event_type:`, originalType, '-> fixed to:', processedEvent.hook_event_type);
     }
     
     return processedEvent;
   });
   
-  console.log('Processed events (first 3):', processedEvents.slice(0, 3).map(e => ({
-    id: e.id,
-    hook_event_type: e.hook_event_type,
-    timestamp: e.timestamp
-  })));
-  
-  console.groupEnd();
+  if (debug) {
+    console.log('Processed events count:', processedEvents.length);
+    console.groupEnd();
+  }
   return processedEvents;
 };
 
 const getTimelinePosition = (event: any) => {
-  const now = currentTime.value;
-  const fiveMinutesAgo = now - (5 * 60000);
+  const now = throttledCurrentTime.value; // Use throttled time for smoother movement
+  const timeRange = 10 * 60000; // 10 minutes range
+  const timeRangeAgo = now - timeRange;
   const eventAge = now - event.timestamp;
   
-  // If event is older than 5 minutes, distribute them evenly on the left side
-  if (eventAge > 5 * 60000) {
-    // Place older events between 0% and 10% of the timeline
-    const index = event.index || 0; // We'll need to add index in the template
-    const position = (index / 10) * 10; // Distribute across first 10% of timeline
-    return {
-      left: `${position}%`,
-      opacity: '0.6' // Slightly faded to show they're older
-    };
+  // Calculate position based on timestamp relative to the time range
+  let position;
+  
+  if (event.timestamp >= timeRangeAgo) {
+    // Event is within the time range - calculate normal position
+    position = ((event.timestamp - timeRangeAgo) / timeRange) * 100;
+  } else {
+    // Event is older than time range - distribute older events across the left 20%
+    const index = event.index || 0;
+    position = (index / 15) * 20; // Spread across first 20% of timeline
   }
   
-  // For recent events, calculate normal position
-  const position = ((event.timestamp - fiveMinutesAgo) / (5 * 60000)) * 100;
+  const clampedPosition = Math.max(0, Math.min(100, position));
   
   return {
-    left: `${Math.max(0, Math.min(100, position))}%`,
-    transition: 'left 1s linear' // Smooth transition for position updates
+    transform: `translateX(${clampedPosition}%)`,
+    transition: 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)', // Smooth easing
+    willChange: 'transform', // Optimize for GPU acceleration
+    opacity: eventAge > timeRange ? '0.7' : '1' // Slightly fade older events
   };
 };
 
@@ -409,6 +412,7 @@ const getEventIcon = (eventType: string) => {
   iconCallCount.value++;
   
   const icons = {
+    // Snake case (original format)
     'pre_tool_use': '🔧',
     'post_tool_use': '✅',
     'chat': '💬',
@@ -417,7 +421,17 @@ const getEventIcon = (eventType: string) => {
     'subagent_stop': '🤖',
     'error': '❌',
     'warning': '⚠️',
-    'info': 'ℹ️'
+    'info': 'ℹ️',
+    // PascalCase variants (new format)
+    'PreToolUse': '🔧',
+    'PostToolUse': '✅',
+    'Chat': '💬',
+    'Stop': '⏹️',
+    'Notification': '🔔',
+    'SubagentStop': '🤖',
+    'Error': '❌',
+    'Warning': '⚠️',
+    'Info': 'ℹ️'
   };
   
   // Reduced logging - only log when there's an issue
@@ -613,10 +627,8 @@ const generateMockData = () => {
     
     for (let i = 0; i < eventCount; i++) {
       const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
-      // Mix of recent and slightly older events
-      const timeOffset = i < 5 
-        ? Math.floor(Math.random() * 60000) // First 5 events within last minute
-        : Math.floor(Math.random() * 240000); // Rest within last 4 minutes
+      // Spread events across the full 10-minute timeline
+      const timeOffset = Math.floor(Math.random() * 600000); // Random time within last 10 minutes
       
       mockEvents.push(Object.freeze({
         id: `${sessionId}-${i}`,
@@ -654,12 +666,30 @@ onMounted(() => {
     events.value.push(...mockEvents);
   }
   
-  // Update current time for smooth timeline scrolling
-  timelineUpdateInterval.value = setInterval(() => {
-    currentTime.value = Date.now();
+  // Use requestAnimationFrame for ultra-smooth timeline updates
+  let lastFrameTime = performance.now();
+  const animateTimeline = (currentFrameTime: number) => {
+    // Calculate delta time for consistent movement
+    const deltaTime = currentFrameTime - lastFrameTime;
     
-    // Add new mock event occasionally for testing (remove this in production)
-    if (Math.random() < 0.1) { // 10% chance each second
+    // Update only if enough time has passed (60fps = ~16.67ms per frame)
+    if (deltaTime >= 16) {
+      currentTime.value = Date.now();
+      lastFrameTime = currentFrameTime;
+    }
+    
+    // Continue animation loop
+    if (timelineUpdateInterval.value !== null) {
+      timelineUpdateInterval.value = requestAnimationFrame(animateTimeline);
+    }
+  };
+  
+  // Start the animation loop
+  timelineUpdateInterval.value = requestAnimationFrame(animateTimeline);
+  
+  // Add new mock event occasionally for testing (remove this in production)
+  setInterval(() => {
+    if (Math.random() < 0.05) { // 5% chance every 5 seconds
       const sessionIds = ['session-cc-1', 'session-cc-2', 'session-cc-3', 'session-cd-1'];
       const eventTypes = ['pre_tool_use', 'post_tool_use', 'chat', 'notification', 'stop'];
       const toolNames = ['Edit', 'Read', 'Bash', 'Write', 'Search'];
@@ -689,7 +719,7 @@ onMounted(() => {
         newEvent.isNew = false;
       }, 2000);
     }
-  }, 1000); // Update every second for smooth scrolling
+  }, 5000); // Every 5 seconds for mock events
   
   // Track events per minute
   setInterval(() => {
@@ -710,7 +740,8 @@ onMounted(() => {
 // Cleanup interval on unmount
 onUnmounted(() => {
   if (timelineUpdateInterval.value) {
-    clearInterval(timelineUpdateInterval.value);
+    cancelAnimationFrame(timelineUpdateInterval.value);
+    timelineUpdateInterval.value = null;
   }
 });
 </script>
@@ -940,6 +971,11 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 1rem;
   overflow: hidden;
+  
+  /* Performance optimizations for smooth animations */
+  will-change: scroll-position;
+  contain: layout style paint;
+  transform: translateZ(0); /* Force GPU layer */
 }
 
 .timeline-event {
@@ -957,6 +993,13 @@ onUnmounted(() => {
   transition: transform 0.3s ease, box-shadow 0.3s ease; /* Don't transition left here */
   animation: eventPulse 2s infinite;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  
+  /* Performance optimizations for ultra-smooth movement */
+  will-change: transform;
+  contain: layout style paint;
+  backface-visibility: hidden;
+  perspective: 1000px;
+  transform-style: preserve-3d;
 }
 
 @keyframes eventPulse {
