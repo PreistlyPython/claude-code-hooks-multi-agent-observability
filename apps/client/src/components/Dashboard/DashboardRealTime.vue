@@ -318,7 +318,7 @@ const getTimelineEvents = (session: any) => {
   const timeRangeAgo = now - timeRange;
   
   // Reduced logging for performance - only log when debugging
-  const debug = false; // Set to true when debugging timeline issues
+  const debug = true; // Set to true when debugging timeline issues
   
   if (debug) {
     console.group(`🔍 getTimelineEvents Debug for session: ${session.sessionId}`);
@@ -364,25 +364,42 @@ const getTimelinePosition = (event: any) => {
   const timeRangeAgo = now - timeRange;
   const eventAge = now - event.timestamp;
   
+  // Debug logging
+  if (Math.random() < 0.1) { // Log 10% of calls
+    console.log('🔍 Position Debug:', {
+      eventId: event.id,
+      now: new Date(now).toLocaleTimeString(),
+      eventTime: new Date(event.timestamp).toLocaleTimeString(),
+      eventAge: Math.round(eventAge / 60000) + 'm',
+      timeRangeAgo: new Date(timeRangeAgo).toLocaleTimeString(),
+      withinRange: event.timestamp >= timeRangeAgo
+    });
+  }
+  
   // Calculate position based on timestamp relative to the time range
   let position;
   
   if (event.timestamp >= timeRangeAgo) {
     // Event is within the time range - calculate normal position
     position = ((event.timestamp - timeRangeAgo) / timeRange) * 100;
+    if (Math.random() < 0.1) {
+      console.log('✅ Within range position:', position);
+    }
   } else {
     // Event is older than time range - distribute older events across the left 20%
     const index = event.index || 0;
     position = (index / 15) * 20; // Spread across first 20% of timeline
+    if (Math.random() < 0.1) {
+      console.log('⚠️ Older event position:', position, 'index:', index);
+    }
   }
   
   const clampedPosition = Math.max(0, Math.min(100, position));
   
   return {
-    transform: `translateX(${clampedPosition}%)`,
-    transition: 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)', // Smooth easing
-    willChange: 'transform', // Optimize for GPU acceleration
-    opacity: eventAge > timeRange ? '0.7' : '1' // Slightly fade older events
+    left: `${clampedPosition}%`,
+    opacity: eventAge > timeRange ? '0.7' : '1', // Slightly fade older events
+    transition: 'left 1s ease-out' // Smooth movement
   };
 };
 
@@ -627,8 +644,15 @@ const generateMockData = () => {
     
     for (let i = 0; i < eventCount; i++) {
       const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
-      // Spread events across the full 10-minute timeline
-      const timeOffset = Math.floor(Math.random() * 600000); // Random time within last 10 minutes
+      // Create a mix of recent and older events for better testing
+      let timeOffset;
+      if (i < 8) {
+        // First 8 events within last 10 minutes (these should move on timeline)
+        timeOffset = Math.floor(Math.random() * 600000); // 0-10 minutes ago
+      } else {
+        // Remaining events can be older (these will be static on left side)
+        timeOffset = 600000 + Math.floor(Math.random() * 600000); // 10-20 minutes ago
+      }
       
       mockEvents.push(Object.freeze({
         id: `${sessionId}-${i}`,
@@ -660,8 +684,13 @@ onMounted(() => {
     isTimelineCollapsed.value = savedCollapseState === 'true';
   }
   
-  // Add mock data if no real events are available
+  // Add mock data if no real events are available or clear old data for testing
   if (events.value.length === 0) {
+    const mockEvents = generateMockData();
+    events.value.push(...mockEvents);
+  } else {
+    // Clear old events and regenerate for testing timeline movement
+    events.value.splice(0, events.value.length);
     const mockEvents = generateMockData();
     events.value.push(...mockEvents);
   }
@@ -689,7 +718,7 @@ onMounted(() => {
   
   // Add new mock event occasionally for testing (remove this in production)
   setInterval(() => {
-    if (Math.random() < 0.05) { // 5% chance every 5 seconds
+    if (Math.random() < 0.3) { // 30% chance every 5 seconds for better visibility
       const sessionIds = ['session-cc-1', 'session-cc-2', 'session-cc-3', 'session-cd-1'];
       const eventTypes = ['pre_tool_use', 'post_tool_use', 'chat', 'notification', 'stop'];
       const toolNames = ['Edit', 'Read', 'Bash', 'Write', 'Search'];
