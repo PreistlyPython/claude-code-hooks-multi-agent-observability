@@ -318,7 +318,7 @@ const getTimelineEvents = (session: any) => {
   const timeRangeAgo = now - timeRange;
   
   // Reduced logging for performance - only log when debugging
-  const debug = true; // Set to true when debugging timeline issues
+  const debug = false; // Set to true when debugging timeline issues
   
   if (debug) {
     console.group(`🔍 getTimelineEvents Debug for session: ${session.sessionId}`);
@@ -593,12 +593,13 @@ watch(events, (newEvents, oldEvents) => {
       const icon = getEventIcon(event.hook_event_type);
       console.log(`Icon for new event ${i}:`, icon);
       
-      event.isNew = true;
+      // Don't mutate frozen events - this was causing recursive updates
+      // event.isNew = true;
       
       // Remove the 'new' flag after animation
-      setTimeout(() => {
-        event.isNew = false;
-      }, 2000);
+      // setTimeout(() => {
+      //   event.isNew = false;
+      // }, 2000);
     }
   }
   
@@ -640,19 +641,12 @@ const generateMockData = () => {
   for (let sessionIdx = 0; sessionIdx < sessionIds.length; sessionIdx++) {
     const sessionId = sessionIds[sessionIdx];
     const sourceApp = sessionIdx < 3 ? 'claude-code' : 'claude-desktop';
-    const eventCount = 15 + Math.floor(Math.random() * 10); // 15-25 events per session
+    const eventCount = 5; // Fewer events for clearer visualization
     
     for (let i = 0; i < eventCount; i++) {
       const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
-      // Create a mix of recent and older events for better testing
-      let timeOffset;
-      if (i < 8) {
-        // First 8 events within last 10 minutes (these should move on timeline)
-        timeOffset = Math.floor(Math.random() * 600000); // 0-10 minutes ago
-      } else {
-        // Remaining events can be older (these will be static on left side)
-        timeOffset = 600000 + Math.floor(Math.random() * 600000); // 10-20 minutes ago
-      }
+      // Create events spread evenly across the timeline
+      const timeOffset = (i / eventCount) * 600000; // Evenly distributed from 0-10 minutes
       
       mockEvents.push(Object.freeze({
         id: `${sessionId}-${i}`,
@@ -684,13 +678,8 @@ onMounted(() => {
     isTimelineCollapsed.value = savedCollapseState === 'true';
   }
   
-  // Add mock data if no real events are available or clear old data for testing
+  // Add mock data if no real events are available
   if (events.value.length === 0) {
-    const mockEvents = generateMockData();
-    events.value.push(...mockEvents);
-  } else {
-    // Clear old events and regenerate for testing timeline movement
-    events.value.splice(0, events.value.length);
     const mockEvents = generateMockData();
     events.value.push(...mockEvents);
   }
@@ -743,10 +732,10 @@ onMounted(() => {
       
       events.value.unshift(newEvent);
       
-      // Remove the 'new' flag after animation
-      setTimeout(() => {
-        newEvent.isNew = false;
-      }, 2000);
+      // Don't mutate frozen object - was causing recursive updates
+      // setTimeout(() => {
+      //   newEvent.isNew = false;
+      // }, 2000);
     }
   }, 5000); // Every 5 seconds for mock events
   
@@ -1010,7 +999,7 @@ onUnmounted(() => {
 .timeline-event {
   position: absolute;
   top: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -1019,12 +1008,12 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: transform 0.3s ease, box-shadow 0.3s ease; /* Don't transition left here */
+  transition: left 1s ease-out, transform 0.3s ease, box-shadow 0.3s ease;
   animation: eventPulse 2s infinite;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   
   /* Performance optimizations for ultra-smooth movement */
-  will-change: transform;
+  will-change: left, transform;
   contain: layout style paint;
   backface-visibility: hidden;
   perspective: 1000px;
@@ -1032,13 +1021,13 @@ onUnmounted(() => {
 }
 
 @keyframes eventPulse {
-  0% { transform: translate(-50%, -50%) scale(1); }
-  50% { transform: translate(-50%, -50%) scale(1.1); }
-  100% { transform: translate(-50%, -50%) scale(1); }
+  0% { transform: translateY(-50%) scale(1); }
+  50% { transform: translateY(-50%) scale(1.1); }
+  100% { transform: translateY(-50%) scale(1); }
 }
 
 .timeline-event:hover {
-  transform: translate(-50%, -50%) scale(1.2);
+  transform: translateY(-50%) scale(1.2);
   z-index: 10;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
