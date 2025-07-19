@@ -307,8 +307,8 @@ const timeLabels = computed(() => {
 
 // Throttled timeline position calculation for performance
 const throttledCurrentTime = computed(() => {
-  // Update position calculations only every ~100ms for ultra-smooth movement
-  const timeStep = 100; // milliseconds
+  // Update position calculations only every ~1000ms to reduce reactivity overhead
+  const timeStep = 1000; // milliseconds (1 second steps)
   return Math.floor(currentTime.value / timeStep) * timeStep;
 });
 
@@ -553,81 +553,22 @@ const debugEventClick = (event: any, index: number) => {
   console.groupEnd();
 };
 
-// Watch for new events and add animation
-watch(events, (newEvents, oldEvents) => {
-  console.group('🔍 Events Watch Debug');
-  console.log('Old events count:', oldEvents.length);
-  console.log('New events count:', newEvents.length);
-  
-  // Check for event data integrity
-  if (newEvents.length > 0) {
-    console.log('Sample event (first):');
-    const sample = newEvents[0];
-    console.log('- hook_event_type:', sample.hook_event_type);
-    console.log('- is frozen:', Object.isFrozen(sample));
-    console.log('- keys:', Object.keys(sample));
-    
-    // Check if events have been mutated
-    const eventsWithMissingTypes = newEvents.filter(e => !e.hook_event_type);
-    if (eventsWithMissingTypes.length > 0) {
-      console.error('🚨 Found events with missing hook_event_type:', eventsWithMissingTypes.length);
-      console.error('Examples:', eventsWithMissingTypes.slice(0, 3));
-    }
-  }
-  
-  if (newEvents.length > oldEvents.length) {
-    // Mark new events
-    const newEventCount = newEvents.length - oldEvents.length;
-    console.log('New event count:', newEventCount);
-    
-    for (let i = 0; i < newEventCount; i++) {
-      const event = newEvents[i];
-      console.log(`New event ${i}:`, {
-        id: event.id,
-        hook_event_type: event.hook_event_type,
-        timestamp: event.timestamp,
-        isFrozen: Object.isFrozen(event)
-      });
-      
-      // Test icon generation immediately
-      const icon = getEventIcon(event.hook_event_type);
-      console.log(`Icon for new event ${i}:`, icon);
-      
-      // Don't mutate frozen events - this was causing recursive updates
-      // event.isNew = true;
-      
-      // Remove the 'new' flag after animation
-      // setTimeout(() => {
-      //   event.isNew = false;
-      // }, 2000);
-    }
-  }
-  
-  console.groupEnd();
-}, { deep: true });
+// Simplified event watcher (disable deep watching to prevent recursive updates)
+// watch(events, (newEvents, oldEvents) => {
+//   if (newEvents.length > oldEvents.length) {
+//     console.log('New events added:', newEvents.length - oldEvents.length);
+//   }
+// });
 
 // Save collapse state to localStorage
 watch(isTimelineCollapsed, (newValue) => {
   localStorage.setItem('timeline-collapsed', String(newValue));
 });
 
-// Debug watcher for sessionColumns
-watch(sessionColumns, (newCols, oldCols) => {
-  console.group('🔍 Session Columns Watch Debug');
-  console.log('Old columns count:', oldCols.length);
-  console.log('New columns count:', newCols.length);
-  
-  newCols.forEach((col, idx) => {
-    console.log(`Session ${idx}:`, {
-      id: col.sessionId,
-      eventCount: col.events.length,
-      firstEventType: col.events[0]?.hook_event_type,
-      hasUndefinedTypes: col.events.some(e => !e.hook_event_type)
-    });
-  });
-  
-  console.groupEnd();
-}, { deep: true });
+// Simplified watcher for sessionColumns (without deep watching to reduce overhead)
+// watch(sessionColumns, (newCols, oldCols) => {
+//   console.log('Session columns updated:', newCols.length);
+// });
 
 // Generate mock data for testing when no server is available
 const generateMockData = () => {
@@ -684,26 +625,10 @@ onMounted(() => {
     events.value.push(...mockEvents);
   }
   
-  // Use requestAnimationFrame for ultra-smooth timeline updates
-  let lastFrameTime = performance.now();
-  const animateTimeline = (currentFrameTime: number) => {
-    // Calculate delta time for consistent movement
-    const deltaTime = currentFrameTime - lastFrameTime;
-    
-    // Update only if enough time has passed (60fps = ~16.67ms per frame)
-    if (deltaTime >= 16) {
-      currentTime.value = Date.now();
-      lastFrameTime = currentFrameTime;
-    }
-    
-    // Continue animation loop
-    if (timelineUpdateInterval.value !== null) {
-      timelineUpdateInterval.value = requestAnimationFrame(animateTimeline);
-    }
-  };
-  
-  // Start the animation loop
-  timelineUpdateInterval.value = requestAnimationFrame(animateTimeline);
+  // Use a simple interval instead of requestAnimationFrame to avoid recursive updates
+  timelineUpdateInterval.value = setInterval(() => {
+    currentTime.value = Date.now();
+  }, 100); // Update every 100ms for smooth movement without overwhelming the system
   
   // Add new mock event occasionally for testing (remove this in production)
   setInterval(() => {
@@ -758,7 +683,7 @@ onMounted(() => {
 // Cleanup interval on unmount
 onUnmounted(() => {
   if (timelineUpdateInterval.value) {
-    cancelAnimationFrame(timelineUpdateInterval.value);
+    clearInterval(timelineUpdateInterval.value);
     timelineUpdateInterval.value = null;
   }
 });
